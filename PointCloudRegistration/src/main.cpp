@@ -1,4 +1,4 @@
-#define _USE_MATH_DEFINES
+ #define _USE_MATH_DEFINES
 #include <iostream>
 #include <opencv2/highgui/highgui.hpp>
 #include <opencv2/opencv.hpp>
@@ -18,7 +18,7 @@ using namespace std::chrono;
 
 // ARGUMENTS
  //how many KNN neighbors to find (both for ICP and TR_ICP)
-const int K = 1;
+const int K = 5;
 
 // max iterations after which both TR_ICP and ICP exit
 const int MAX_ITERATIONS = 50;
@@ -43,7 +43,7 @@ int NUM_OF_TR_POINTS = 40000;
 // if this param true, offsets the second pointcloud with static and gaussian offsets
 // meant for testing if you just have one pointcloud on hand
 // if set to 0, second pointcloud just imported as original
-const bool APPLY_OFFSET_AND_GAUSSIAN_ON_SECOND_CLOUD = 0;
+const bool APPLY_OFFSET_AND_GAUSSIAN_ON_SECOND_CLOUD = 1;
 // ************************************
 
 double prev_error = 0;
@@ -65,7 +65,7 @@ void searchNN(const Eigen::MatrixXf& pointcloud1,
     Eigen::MatrixXf& dists,
     const bool return_dist_squared);
 
-int import3dPointsFromFile(string file_path, vector<Point3d>& out_points);
+int import3dPointsFromFile(string file_path, vector<Point3d >& out_points);
 
 /**
  * @brief Sorts the given matrix filled with float numbers. Outputs the sorted matrix and
@@ -133,8 +133,14 @@ int best_fit_transform(const Eigen::MatrixXd& A,
     Eigen::Vector3d& t);
 
 
+/**
+ * @brief estimates random rotation of matrix
+ * 
+ * @param matrix
  
- // MAIN
+Eigen::MatrixXf rotateRandomly(Eigen::MatrixXf& points2);
+*/
+// MAIN
 
 
 
@@ -170,8 +176,7 @@ int main(int argc, char** argv) {
     }
     outputFile3.close();
 
-
-    if (!import3dPointsFromFile(("../data/fountainModelSet.xyz"), points2)) {
+     if (!import3dPointsFromFile(("../data/fountainModelSet.xyz"), points2)) {
         return 0;
     }
     Eigen::MatrixXf dst(points2.size(), 3);
@@ -220,7 +225,6 @@ int main(int argc, char** argv) {
         }
     }
 
-
     ofstream outputFile("../data/dst.xyz");
     for (int g = 0; g < dst.rows(); g++) {
         for (int gh = 0; gh < 3; gh++) {
@@ -234,14 +238,17 @@ int main(int argc, char** argv) {
     Eigen::MatrixXf out(dst.rows(), 3);
  
     auto start = high_resolution_clock::now();
-    //icp(src, dst, out, MAX_ITERATIONS, ERROR_DROP_THRESH);  
-   tr_icp(src, dst, out, MAX_ITERATIONS, ERROR_LOW_THRESH, DIST_DROP_THRESH, NUM_OF_TR_POINTS);
-   /*// execute icp
+    icp(src, dst, out, MAX_ITERATIONS, ERROR_DROP_THRESH);
+   // tr_icp(src, dst, out, MAX_ITERATIONS, ERROR_LOW_THRESH, DIST_DROP_THRESH, NUM_OF_TR_POINTS);
+   /*icp(src, dst, out, MAX_ITERATIONS, ERROR_DROP_THRESH);//Executed in  130891ms ms MSE: 0.287665/0.010000
+    //tr_icp(src, dst, out, MAX_ITERATIONS, ERROR_LOW_THRESH, DIST_DROP_THRESH, NUM_OF_TR_POINTS);//Executed in 121563ms ms MSE  5.223052/0.050000
+   // execute icp
     if (!icp(src, dst, out, MAX_ITERATIONS, ERROR_DROP_THRESH)) {
         cout << "Error while execution of ICP" << endl;
         return -1;
     }
 
+    // // execute trimmed icp
     // if(!tr_icp(src, dst, out, MAX_ITERATIONS, ERROR_LOW_THRESH, DIST_DROP_THRESH, NUM_OF_TR_POINTS)){
     //   cout << "Error while execution of ICP" << endl;
     //   return -1;
@@ -280,32 +287,26 @@ void searchNN(const Eigen::MatrixXf& cloud1, const Eigen::MatrixXf& cloud2, cons
     RowMatX3f coords2 = cloud2.leftCols(3);
     nanoflann::KDTreeEigenMatrixAdaptor<RowMatX3f> mat_index(3, coords1, max_leaf);
     mat_index.index->buildIndex();
-     std::cout << sizeof(indices)  ;
-
-   // indices.resize(cloud2.rows(), k);
-   //dists.resize(cloud2.rows(), k);
+    indices.resize(cloud2.rows(), k);
+    dists.resize(cloud2.rows(), k);
     // do a knn search
- 
     for (int i = 0; i < coords2.rows(); ++i) {
         std::vector<float> query_pt{ coords2.data()[i * 3 + 0], coords2.data()[i * 3 + 1], coords2.data()[i * 3 + 2] };
 
         std::vector<size_t> ret_indices(k);
         std::vector<float> out_dists_sqr(k);
         nanoflann::KNNResultSet<float> resultSet(k);
- 
         resultSet.init(&ret_indices[0], &out_dists_sqr[0]);
-         mat_index.index->findNeighbors(resultSet, &query_pt[0], nanoflann::SearchParams(10));
-      /*  for (size_t j = 0; j < k; ++j) {
-            indices (i)= ret_indices[0];
-            std::cout << "E";
-          */
+        mat_index.index->findNeighbors(resultSet, &query_pt[0], nanoflann::SearchParams(10));
+        for (size_t j = 0; j < k; ++j) {
+            indices(i, j) = ret_indices[j];
             if (return_dist_squared) {//tr_icp
-                dists(i) = out_dists_sqr[0];
+                dists(i, j) = out_dists_sqr[j];
             }
             else {
-                dists(i) = std::sqrt(out_dists_sqr[0]);//icp
+                dists(i, j) = std::sqrt(out_dists_sqr[j]);//icp
             }
-       // }*/
+        }
     }
 }
 
@@ -445,8 +446,6 @@ int icp(const Eigen::MatrixXf& src, const Eigen::MatrixXf& dst, Eigen::MatrixXf&
 
         prev_error = mean_error;
         prev_dist_sum = dist_sum;
-       //ICP is efficient in small rotationsand noise - free data
-       //Tr - ICP is more robust to rotations and incomplete, noisy data.
     }
 }
 
@@ -563,4 +562,5 @@ int tr_icp(const Eigen::MatrixXf& src,
 
     return 1;
 }
+
  
